@@ -1,0 +1,33 @@
+HERE ARE THE STEPS TO FULLY INSTALL AND RUN THE WEBSITE
+
+1. Make a new folder
+
+2. Navigate to the new folder with cd /FolderName
+We will need 2 different folders inside our project folder, one being Frontend and one being Backend. First, we will create the Frontend
+
+3. In the terminal navigated to your project folder, run the following code,
+npm create vite@latest Frontend -- --template react
+
+4. Go to the Frontend and install dependencies
+cd Frontend
+npm install
+
+5. Find the App.jsx file that was created by running the code above, and replace it with the code in this git
+Now we can set up the Backend
+
+6. Create a backend folder in the project folder, and create a file named server.js inside the new folder. Copy and Paste the code from this git into that file
+
+6. Open a terminal navigated to Backend, and run the following code
+npm init -y
+npm install express cors ws
+
+NOW WE CAN ACTUALLY RUN THE WEBSITE
+Steps to run
+1. Upload the Arduino Code to the ESP32C3
+2. Open a terminal navigated to Backend and run node server.js
+3. Open a terminal navigated to Frontend and run npm run dev
+
+MAKE SURE TO
+- Under the line const char* backendURL = "http://172.20.10.5:3000/data" in your arduino code, replace the 172.20.10.5 part with your own ip (get by running ipconfig in terminal)
+- Make sure your credentials are correct for your Wifi
+😛😛😛
