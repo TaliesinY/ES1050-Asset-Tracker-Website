@@ -1,0 +1,159 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <WiFiUdp.h>
+#include <HTTPClient.h>
+#include "esp_wpa2.h"  // Required for WPA2 Enterprise
+
+// WiFi credentials
+const char* WIFI_SSID = "";    // e.g. "eduroam" or "UniWiFi"
+const char* WIFI_USER = "";       // e.g. "jsmith@university.edu"
+const char* WIFI_PASS = "";
+
+// Backend server URL
+const char* backendURL = "http://172.22.16.147:3000/data"; // update with your laptop IP
+
+// Calibration values
+const float MEASURED_POWER = -40.0;
+const float N = 2.7;
+
+WebServer server(80);
+WiFiUDP udp;
+const int UDP_PORT = 4210;
+String lastUdpMsg = "(none yet)";
+unsigned long lastUdpAtMs = 0;
+unsigned long lastPostTime = 0;
+const unsigned long POST_INTERVAL = 5000;
+
+void setupWiFi() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_STA);
+
+  // WPA2 Enterprise (PEAP/MSCHAPv2) configuration
+  esp_wifi_sta_wpa2_ent_set_identity((uint8_t *)WIFI_USER, strlen(WIFI_USER));
+  esp_wifi_sta_wpa2_ent_set_username((uint8_t *)WIFI_USER, strlen(WIFI_USER));
+  esp_wifi_sta_wpa2_ent_set_password((uint8_t *)WIFI_PASS, strlen(WIFI_PASS));
+  esp_wifi_sta_wpa2_ent_enable();
+
+  WiFi.begin(WIFI_SSID);
+
+  Serial.print("Connecting to enterprise WiFi");
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+    if (millis() - start > 30000) {
+      Serial.println("\nFailed to connect, restarting...");
+      ESP.restart();
+    }
+  }
+  Serial.println("\nConnected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+float calculateDistance(int32_t rssi) {
+  if (rssi == 0) return -1.0;
+  return pow(10.0, (MEASURED_POWER - rssi) / (10.0 * N));
+}
+
+int getSignalQuality(int32_t rssi) {
+  int quality = 2 * (rssi + 100);
+  if (quality > 100) quality = 100;
+  if (quality < 0)   quality = 0;
+  return quality;
+}
+
+String getSignalLevel(int32_t rssi) {
+  if (rssi >= -50) return "  1m";
+  else if (rssi >= -60) return "1.5m";
+  else if (rssi >= -70) return "2m";
+  else if (rssi >= -80) return "2.5m";
+  else return "Very Weak";
+}
+
+void sendPost() {
+  if (WiFi.status() == WL_CONNECTED) {
+    int32_t rssi = WiFi.RSSI();
+    HTTPClient http;
+    http.begin(backendURL);
+    http.addHeader("Content-Type", "application/json");
+
+    String jsonData = "{\"name\":\"Untitled\",\"location\":\"N/A\",\"status\":\"vacant\",\"distance\":"
+                      + String(calculateDistance(rssi)) + "}";
+
+    int httpResponseCode = http.POST(jsonData);
+    if (httpResponseCode > 0) {
+      Serial.println("POST Response: " + http.getString());
+    } else {
+      Serial.print("POST Error: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
+
+void handleRoot() {
+  String s = "ESP32 Enterprise WiFi\n";
+  s += "IP: " + WiFi.localIP().toString() + "\n";
+  s += "UDP port: " + String(UDP_PORT) + "\n";
+  server.send(200, "text/plain", s);
+}
+
+void handleLast() {
+  String s = "Last UDP message:\n";
+  s += lastUdpMsg + "\n";
+  s += "Received at (ms): " + String(lastUdpAtMs) + "\n";
+  server.send(200, "text/plain", s);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  setupWiFi();
+
+  udp.begin(UDP_PORT);
+  Serial.printf("Listening for UDP on port %d\n", UDP_PORT);
+
+  server.on("/", handleRoot);
+  server.on("/last", handleLast);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+
+  int32_t rssi = WiFi.RSSI();
+  float distance = calculateDistance(rssi);
+
+  Serial.println("\n--- WiFi Signal Strength ---");
+  Serial.print("RSSI: ");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+  Serial.print("Signal Quality: ");
+  Serial.print(getSignalQuality(rssi));
+  Serial.println("%");
+  Serial.print("Estimated Distance: ");
+  Serial.print(distance, 2);
+  Serial.println(" meters");
+  Serial.print("Signal Level: ");
+  Serial.println(getSignalLevel(rssi));
+
+  int packetSize = udp.parsePacket();
+  if (packetSize > 0) {
+    char buf[256];
+    int len = udp.read(buf, sizeof(buf) - 1);
+    if (len > 0) buf[len] = '\0';
+    lastUdpMsg = String(buf);
+    lastUdpAtMs = millis();
+    Serial.println("UDP received: " + lastUdpMsg);
+    sendPost();
+  }
+
+  if (millis() - lastPostTime > POST_INTERVAL) {
+    lastPostTime = millis();
+    sendPost();
+  }
+
+  delay(5000);
+}
